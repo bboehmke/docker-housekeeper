@@ -3,6 +3,7 @@ module gitlab.com/bboehmke/docker-housekeeper
 go 1.15
 
 require (
+	filippo.io/age v1.0.0
 	github.com/lib/pq v1.9.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cast v1.3.0

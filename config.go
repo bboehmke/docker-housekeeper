@@ -2,10 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 
+	"filippo.io/age"
 	"github.com/spf13/cast"
 )
 
@@ -31,6 +33,20 @@ type BackupConfig struct {
 	Schedule string `conf:"BACKUP_SCHEDULE,@daily"`
 
 	Storage string `conf:"BACKUP_STORAGE,/backup"`
+
+	AgeRecipients []*age.X25519Recipient `conf:"BACKUP_AGE_RECIPIENTS"`
+	AgePassword   *age.ScryptRecipient   `conf:"BACKUP_AGE_PASSWORD"`
+}
+
+func (c *BackupConfig) ageRecipients() []age.Recipient {
+	var recipients []age.Recipient
+	for _, recipient := range c.AgeRecipients {
+		recipients = append(recipients, recipient)
+	}
+	if c.AgePassword != nil {
+		recipients = append(recipients, c.AgePassword)
+	}
+	return recipients
 }
 
 type Config struct {
@@ -57,24 +73,34 @@ func (c *Config) validate() error {
 		return errors.New("database config missing for backup")
 	}
 
+	if c.Backup.AgeRecipients != nil && c.Backup.AgePassword != nil {
+		return errors.New("only age recipients OR a password is supported")
+	}
+
 	return nil
 }
 
 // LoadConfig from environment
 func LoadConfig() (Config, error) {
 	var conf Config
-	loadStruct(reflect.ValueOf(&conf).Elem())
+	err := loadStruct(reflect.ValueOf(&conf).Elem())
+	if err != nil {
+		return conf, err
+	}
 	return conf, conf.validate()
 }
 
-func loadStruct(st reflect.Value) {
+func loadStruct(st reflect.Value) error {
 	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
 		fieldType := st.Type().Field(i)
 
 		// load sub structures
 		if fieldType.Type.Kind() == reflect.Struct {
-			loadStruct(field)
+			err := loadStruct(field)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -115,8 +141,44 @@ func loadStruct(st reflect.Value) {
 				field.SetBool(cast.ToBool(defaultValue))
 			}
 
+		case reflect.Slice:
+			if !valueGiven {
+				continue
+			}
+
+			if fieldType.Type.Elem() == reflect.TypeOf(new(age.X25519Recipient)) {
+				var recipients []*age.X25519Recipient
+				for _, key := range strings.Split(value, ",") {
+					recipient, err := age.ParseX25519Recipient(strings.TrimSpace(key))
+					if err != nil {
+						return fmt.Errorf("invalid recipient given %s: %w", key, err)
+					}
+					recipients = append(recipients, recipient)
+				}
+				field.Set(reflect.ValueOf(recipients))
+			} else {
+				panic("unsupported slice type")
+			}
+
+		case reflect.Ptr:
+			if !valueGiven {
+				continue
+			}
+
+			if fieldType.Type.Elem() == reflect.TypeOf(age.ScryptRecipient{}) {
+				recipient, err := age.NewScryptRecipient(value)
+				if err != nil {
+					return fmt.Errorf("invalid password given: %w", err)
+				}
+
+				field.Set(reflect.ValueOf(recipient))
+			} else {
+				panic("unsupported pointer type")
+			}
+
 		default:
 			panic("unsupported struct field type")
 		}
 	}
+	return nil
 }

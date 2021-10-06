@@ -6,6 +6,7 @@ Features:
     * Create User
     * add PG extensions
 * Scheduled backup of database and data directories
+* Encrypted backups via [age](https://github.com/FiloSottile/age)
 
 ## Usage
 
@@ -55,6 +56,22 @@ services:
       BACKUP_DATA_DIR: "/data/A,/data/B"
 ```
 
+Encrypt the backup with an [age](https://github.com/FiloSottile/age):
+```yaml
+services:
+  db_init:
+    image: bboehmke/docker-housekeeper
+    volumes:
+      - ./data/A/:/data/A/
+      - ./backup/:/backup/
+    environment:
+      BACKUP_DATA_DIR: "/data/A"
+      BACKUP_AGE_RECIPIENTS: "age1zdrn7wzxwt3lce5sw4hlx0...sth2ykx"
+```
+
+> The public and private keys the encryption can be created with `age-keygen`.
+> See [age](https://github.com/FiloSottile/age) documentation for more details.
+
 ## Available Configuration Parameters
 
 The configuration is done via environment variables.
@@ -72,6 +89,8 @@ The configuration is done via environment variables.
 
 ### Backup
 
+- **BACKUP_AGE_PASSWORD**: Password to encrypt the backup
+- **BACKUP_AGE_RECIPIENTS**: List of recipient keys used to encrypt the backup (Separated by ",")
 - **BACKUP_DATABASE**: True if database should be part of backup
 - **BACKUP_DATA_DIR**: List of directories to back up (Separated by ",")
 - **BACKUP_DATA_EXCLUDE**: List of directories to exclude from backup (Separated by ",")

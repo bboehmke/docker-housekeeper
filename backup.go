@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
@@ -85,7 +86,13 @@ func (s *BackupService) Backup() error {
 		return nil
 	}
 
-	filename := fmt.Sprintf("backup_%s.zip", time.Now().Format(time.RFC3339))
+	recipients := s.Config.ageRecipients()
+	var filename string
+	if len(recipients) > 0 {
+		filename = fmt.Sprintf("backup_%s.zip.age", time.Now().Format(time.RFC3339))
+	} else {
+		filename = fmt.Sprintf("backup_%s.zip", time.Now().Format(time.RFC3339))
+	}
 	log.Printf("create backup %s ...", filename)
 
 	// open file
@@ -95,8 +102,20 @@ func (s *BackupService) Backup() error {
 	}
 	defer file.Close()
 
+	// create encrypted file if configured
+	var encryptedFile io.WriteCloser
+	if len(recipients) > 0 {
+		encryptedFile, err = age.Encrypt(file, recipients...)
+		if err != nil {
+			return fmt.Errorf("failed age encryption: %w", err)
+		}
+		defer encryptedFile.Close()
+	} else {
+		encryptedFile = file
+	}
+
 	// create zip writer (without compression)
-	zipWriter := zip.NewWriter(file)
+	zipWriter := zip.NewWriter(encryptedFile)
 	defer zipWriter.Close()
 
 	meta := &BackupMeta{
