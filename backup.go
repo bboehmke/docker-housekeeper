@@ -30,6 +30,15 @@ type BackupService struct {
 	CronEntry cron.EntryID
 }
 
+// Prepare for backup (creating directories, checking credentials, ...)
+func (s *BackupService) Prepare() error {
+	err := os.MkdirAll(s.Config.Storage, os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("failed to create backup dir %s: %w", s.Config.Storage, err)
+	}
+	return nil
+}
+
 // IsBackupEnabled returns true if any backup is enabled
 func (s *BackupService) IsBackupEnabled() bool {
 	return s.Config.Database || s.Config.DataDirectories != ""
@@ -75,8 +84,6 @@ func (s *BackupService) Backup() error {
 		log.Print("Nothing to backup")
 		return nil
 	}
-
-	os.MkdirAll(s.Config.Storage, os.ModePerm)
 
 	filename := fmt.Sprintf("backup_%s.zip", time.Now().Format(time.RFC3339))
 	log.Printf("create backup %s ...", filename)

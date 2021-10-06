@@ -39,6 +39,12 @@ func main() {
 		Database: pg,
 	}
 
+	// prepare for backup
+	err = backup.Prepare()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// handle special actions
 	var action string
 	if len(os.Args) > 1 {
