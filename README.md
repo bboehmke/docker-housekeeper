@@ -14,7 +14,7 @@ Only database initialization:
 ```yaml
 services:
   db_init:
-    image: bboehmke/docker-housekeeper
+    image: ghcr.io/bboehmke/docker-housekeeper
     environment:
       DB_HOST: host_name
       DB_ROOT_PASSWORD: password
@@ -27,7 +27,7 @@ Backup 2 directories:
 ```yaml
 services:
   db_init:
-    image: bboehmke/docker-housekeeper
+    image: ghcr.io/bboehmke/docker-housekeeper
     volumes:
       - ./data/A/:/data/A/
       - ./data/B/:/data/B/
@@ -40,7 +40,7 @@ Initialize database and scheduled backup (including directories):
 ```yaml
 services:
   db_init:
-    image: bboehmke/docker-housekeeper
+    image: ghcr.io/bboehmke/docker-housekeeper
     volumes:
       - ./data/A/:/data/A/
       - ./data/B/:/data/B/
@@ -60,7 +60,7 @@ Encrypt the backup with an [age](https://github.com/FiloSottile/age):
 ```yaml
 services:
   db_init:
-    image: bboehmke/docker-housekeeper
+    image: ghcr.io/bboehmke/docker-housekeeper
     volumes:
       - ./data/A/:/data/A/
       - ./backup/:/backup/
