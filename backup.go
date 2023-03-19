@@ -1,18 +1,24 @@
 package main
 
 import (
-	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"filippo.io/age"
+	_ "github.com/rclone/rclone/backend/all"
+	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config"
+	"github.com/rclone/rclone/fs/config/configfile"
+	"github.com/rclone/rclone/fs/object"
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
@@ -29,6 +35,7 @@ type BackupService struct {
 
 	Cron      *cron.Cron
 	CronEntry cron.EntryID
+	RClone    fs.Fs
 }
 
 // Prepare for backup (creating directories, checking credentials, ...)
@@ -36,6 +43,21 @@ func (s *BackupService) Prepare() error {
 	err := os.MkdirAll(s.Config.Storage, os.ModePerm)
 	if err != nil {
 		return fmt.Errorf("failed to create backup dir %s: %w", s.Config.Storage, err)
+	}
+
+	if s.Config.RCloneConfig != "" {
+		err = config.SetConfigPath(s.Config.RCloneConfig)
+		if err != nil {
+			return fmt.Errorf("failed to load rclone config %s: %w", s.Config.RCloneConfig, err)
+		}
+		configfile.Install()
+	}
+
+	if s.Config.RClonePath != "" {
+		s.RClone, err = fs.NewFs(context.Background(), s.Config.RClonePath)
+		if err != nil {
+			return fmt.Errorf("failed create rclone FS %s: %w", s.Config.RClonePath, err)
+		}
 	}
 	return nil
 }
@@ -96,23 +118,17 @@ func (s *BackupService) Backup() error {
 	log.Printf("create backup %s ...", filename)
 
 	// open file
-	file, err := os.Create(filepath.Join(s.Config.Storage, filename))
+	file, fileClose, err := s.createFile(filename)
 	if err != nil {
-		return fmt.Errorf("failed to create backup file %s: %w", filename, err)
+		return err
 	}
-	defer file.Close()
+	defer fileClose()
 
-	// create encrypted file if configured
-	var encryptedFile io.WriteCloser
-	if len(recipients) > 0 {
-		encryptedFile, err = age.Encrypt(file, recipients...)
-		if err != nil {
-			return fmt.Errorf("failed age encryption: %w", err)
-		}
-		defer encryptedFile.Close()
-	} else {
-		encryptedFile = file
+	encryptedFile, encryptClose, err := s.encryptFile(file)
+	if err != nil {
+		return err
 	}
+	defer encryptClose()
 
 	// create zip writer (without compression)
 	zipWriter := zip.NewWriter(encryptedFile)
@@ -123,53 +139,12 @@ func (s *BackupService) Backup() error {
 		Date:    time.Now(),
 	}
 
-	// backup database
-	if s.Config.Database && s.Database != nil {
-		log.Printf("> dump database")
-		writer, err := zipWriter.CreateHeader(&zip.FileHeader{
-			Name:     "database.sql.gz",
-			Modified: time.Now(),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create database.sql.gz: %w", err)
-		}
-
-		// backup database
-		gzipWriter := gzip.NewWriter(writer)
-		err = s.Database.Backup(gzipWriter)
-		gzipWriter.Close()
-		if err != nil {
-			return err
-		}
-		meta.DatabaseBackup = "database.sql.gz"
+	if err = s.backupDatabase(zipWriter, meta); err != nil {
+		return err
 	}
 
-	// backup directories
-	if s.Config.DataDirectories != "" {
-		log.Printf("> backup data directories")
-		dirsSplit := strings.Split(s.Config.DataDirectories, ",")
-		meta.Directories = make([]BackupMetaDirectory, len(dirsSplit))
-		for idx, dir := range dirsSplit {
-			log.Printf("-> %s", dir)
-			dirBackupFilename := fmt.Sprintf("data_%d.tar.gz", idx)
-			writer, err := zipWriter.CreateHeader(&zip.FileHeader{
-				Name:     dirBackupFilename,
-				Modified: time.Now(),
-			})
-			if err != nil {
-				return fmt.Errorf("failed to create data_%d.tar.gz: %w", idx, err)
-			}
-
-			err = tarDir(writer, dir)
-			if err != nil {
-				return fmt.Errorf("failed to create data_%d.tar.gz: %w", idx, err)
-			}
-
-			meta.Directories[idx] = BackupMetaDirectory{
-				DirectoryPath: dir,
-				Filename:      dirBackupFilename,
-			}
-		}
+	if err = s.backupDirectories(zipWriter, meta); err != nil {
+		return err
 	}
 
 	// write meta file
@@ -180,8 +155,8 @@ func (s *BackupService) Backup() error {
 	if err != nil {
 		return fmt.Errorf("failed to create backup.yml: %w", err)
 	}
-	err = yaml.NewEncoder(writer).Encode(&meta)
-	if err != nil {
+
+	if err = yaml.NewEncoder(writer).Encode(&meta); err != nil {
 		return fmt.Errorf("failed to write backup.yml: %w", err)
 	}
 
@@ -190,60 +165,109 @@ func (s *BackupService) Backup() error {
 	return nil
 }
 
-// tarDir creates a tar gz archive from a directory
-func tarDir(writer io.Writer, dir string) error {
-	// create gzip compressed tar writer
-	gzipWriter := gzip.NewWriter(writer)
-	defer gzipWriter.Close()
-	tarWriter := tar.NewWriter(gzipWriter)
-	defer tarWriter.Close()
-
-	return filepath.Walk(dir, func(file string, info os.FileInfo, err error) error {
+// createFile on local file system or remote via rclone
+func (s *BackupService) createFile(filename string) (io.Writer, func(), error) {
+	if s.RClone == nil {
+		file, err := os.Create(filepath.Join(s.Config.Storage, filename))
 		if err != nil {
-			return err
+			return nil, nil, fmt.Errorf("failed to create backup file %s: %w", filename, err)
 		}
+		return file, func() {
+			file.Close()
+		}, nil
+	}
 
-		// handle symlinks
-		var symLinkTarget string
-		if info.Mode()&os.ModeSymlink != 0 {
-			symLinkTarget, err = os.Readlink(file)
-			if err != nil {
-				return fmt.Errorf("failed to get symlink target of %s: %w", file, err)
-			}
-		}
+	reader, writer := io.Pipe()
+	var wg sync.WaitGroup
+	wg.Add(1)
 
-		// generate tar header
-		header, err := tar.FileInfoHeader(info, symLinkTarget)
+	go func() {
+		_, err := s.RClone.Put(context.Background(), reader,
+			object.NewStaticObjectInfo(
+				filename, time.Now(), -1, false, nil, nil))
 		if err != nil {
-			return err
+			_ = reader.CloseWithError(err)
+		} else {
+			reader.Close()
 		}
+		wg.Done()
+	}()
 
-		// make file path relative
-		fileRel, err := filepath.Rel(dir, file)
+	return writer, func() {
+		writer.Close()
+		wg.Wait()
+	}, nil
+}
+
+// encryptFile if configured
+func (s *BackupService) encryptFile(file io.Writer) (io.Writer, func(), error) {
+	recipients := s.Config.ageRecipients()
+	if len(recipients) > 0 {
+		encryptedFile, err := age.Encrypt(file, recipients...)
 		if err != nil {
-			return fmt.Errorf("failed to get relative path: %w", err)
+			return nil, nil, fmt.Errorf("failed age encryption: %w", err)
 		}
-		header.Name = filepath.ToSlash(fileRel)
+		return encryptedFile, func() {
+			encryptedFile.Close()
+		}, nil
+	}
+	return file, func() {}, nil
+}
 
-		// write tar file entry header
-		err = tarWriter.WriteHeader(header)
-		if err != nil {
-			return err
-		}
-
-		// add content of files
-		if info.Mode().IsRegular() {
-			f, err := os.Open(file)
-			if err != nil {
-				return fmt.Errorf("failed to open %s: %w", file, err)
-			}
-			defer f.Close()
-
-			_, err = io.Copy(tarWriter, f)
-			if err != nil {
-				return fmt.Errorf("failed add %s to  archive: %w", file, err)
-			}
-		}
+func (s *BackupService) backupDatabase(zipWriter *zip.Writer, meta *BackupMeta) error {
+	if !s.Config.Database || s.Database == nil {
 		return nil
+	}
+
+	log.Printf("> dump database")
+	writer, err := zipWriter.CreateHeader(&zip.FileHeader{
+		Name:     "database.sql.gz",
+		Modified: time.Now(),
 	})
+	if err != nil {
+		return fmt.Errorf("failed to create database.sql.gz: %w", err)
+	}
+
+	// backup database
+	gzipWriter := gzip.NewWriter(writer)
+	err = s.Database.Backup(gzipWriter)
+	gzipWriter.Close()
+	if err != nil {
+		return err
+	}
+	meta.DatabaseBackup = "database.sql.gz"
+
+	return nil
+}
+
+func (s *BackupService) backupDirectories(zipWriter *zip.Writer, meta *BackupMeta) error {
+	if s.Config.DataDirectories == "" {
+		return nil
+	}
+
+	log.Printf("> backup data directories")
+	dirsSplit := strings.Split(s.Config.DataDirectories, ",")
+	meta.Directories = make([]BackupMetaDirectory, len(dirsSplit))
+	for idx, dir := range dirsSplit {
+		log.Printf("-> %s", dir)
+		dirBackupFilename := fmt.Sprintf("data_%d.tar.gz", idx)
+		writer, err := zipWriter.CreateHeader(&zip.FileHeader{
+			Name:     dirBackupFilename,
+			Modified: time.Now(),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create data_%d.tar.gz: %w", idx, err)
+		}
+
+		err = tarDir(writer, dir)
+		if err != nil {
+			return fmt.Errorf("failed to create data_%d.tar.gz: %w", idx, err)
+		}
+
+		meta.Directories[idx] = BackupMetaDirectory{
+			DirectoryPath: dir,
+			Filename:      dirBackupFilename,
+		}
+	}
+	return nil
 }

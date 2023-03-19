@@ -7,6 +7,7 @@ Features:
     * add PG extensions
 * Scheduled backup of database and data directories
 * Encrypted backups via [age](https://github.com/FiloSottile/age)
+* Backup upload via [rclone](https://rclone.org/) 
 
 ## Usage
 
@@ -94,5 +95,7 @@ The configuration is done via environment variables.
 - **BACKUP_DATABASE**: True if database should be part of backup
 - **BACKUP_DATA_DIR**: List of directories to back up (Separated by ",")
 - **BACKUP_DATA_EXCLUDE**: List of directories to exclude from backup (Separated by ",")
+- **BACKUP_RCLONE_PATH**: Path of rclone remote storage location
+- **BACKUP_RCLONE_CONFIG**: Path of rclone config file
 - **BACKUP_SCHEDULE**: [Cron expression](https://en.wikipedia.org/wiki/Cron) (Default: @daily)
 - **BACKUP_STORAGE**: Storage location for backups

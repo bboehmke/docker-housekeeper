@@ -36,6 +36,9 @@ type BackupConfig struct {
 
 	AgeRecipients []*age.X25519Recipient `conf:"BACKUP_AGE_RECIPIENTS"`
 	AgePassword   *age.ScryptRecipient   `conf:"BACKUP_AGE_PASSWORD"`
+
+	RClonePath   string `conf:"BACKUP_RCLONE_PATH"`
+	RCloneConfig string `conf:"BACKUP_RCLONE_CONFIG"`
 }
 
 func (c *BackupConfig) ageRecipients() []age.Recipient {
