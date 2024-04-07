@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"reflect"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,8 @@ func (h *Housekeeper) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 }
 
 func (h *Housekeeper) StartHealthcheckServer() {
+	_ = os.Remove(socket)
+
 	// start http server
 	go func() {
 		unixListener, err := net.Listen("unix", socket)
