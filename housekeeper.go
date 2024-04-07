@@ -116,5 +116,11 @@ func (h *Housekeeper) Prepare() error {
 		}
 	}
 
-	return h.backup.Prepare()
+	if err := h.backup.Prepare(); err != nil {
+		return err
+	}
+
+	h.running.Store(true)
+
+	return nil
 }
