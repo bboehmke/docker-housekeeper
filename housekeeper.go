@@ -23,7 +23,7 @@ type DatabaseConnection interface {
 }
 
 type Housekeeper struct {
-	config *Config
+	config Config
 
 	db     DatabaseConnection
 	backup *BackupService
@@ -77,7 +77,7 @@ func (h *Housekeeper) Healthcheck() error {
 func (h *Housekeeper) LoadConfig() error {
 	log.Print("Load config")
 
-	err := loadStruct(reflect.ValueOf(h.config).Elem())
+	err := loadStruct(reflect.ValueOf(&h.config).Elem())
 	if err != nil {
 		return err
 	}
