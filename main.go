@@ -9,46 +9,32 @@ import (
 )
 
 func main() {
-	log.Print("Load config")
-	config, err := LoadConfig()
-	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
-	}
-
-	// prepare database connection
-	var pg *PostgresConnection
-	if config.Database.Host != "" {
-		// connect to database
-		log.Print("Wait for database connection")
-		pg = NewPostgresConnection(config.Database)
-
-		err = pg.WaitForConnection(time.Minute)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// initialize database
-		err = pg.Init()
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	backup := BackupService{
-		Config:   config.Backup,
-		Database: pg,
-	}
-
-	// prepare for backup
-	err = backup.Prepare()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	// handle special actions
 	var action string
 	if len(os.Args) > 1 {
 		action = strings.ToLower(os.Args[1])
+	}
+
+	// handle health check early
+	var housekeeper Housekeeper
+	if action == "healthcheck" {
+		err := housekeeper.Healthcheck()
+		if err != nil {
+			log.Fatalf("check failed: %v", err)
+		}
+		os.Exit(0)
+	}
+
+	// load config
+	err := housekeeper.LoadConfig()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+
+	// prepare housekeeper
+	err = housekeeper.Prepare()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	switch action {
@@ -56,7 +42,7 @@ func main() {
 		break
 
 	case "backup": // manual backup
-		err = backup.Backup()
+		err = housekeeper.backup.Backup()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -67,7 +53,7 @@ func main() {
 	}
 
 	// start backup schedule
-	err = backup.StartSchedule()
+	err = housekeeper.backup.StartSchedule()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,5 +62,5 @@ func main() {
 	signal.Notify(c, os.Interrupt)
 	<-c
 
-	backup.StopSchedule(time.Minute * 5)
+	housekeeper.backup.StopSchedule(time.Minute * 5)
 }

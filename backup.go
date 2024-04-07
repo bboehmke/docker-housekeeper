@@ -23,11 +23,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DatabaseConnection that is used for backup the database
-type DatabaseConnection interface {
-	Backup(writer io.Writer) error
-}
-
 // BackupService handles database and directory backups
 type BackupService struct {
 	Config   BackupConfig

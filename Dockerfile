@@ -1,4 +1,4 @@
-FROM golang:1.21
+FROM golang:1.22
 
 COPY . /src/
 WORKDIR /src/
@@ -13,6 +13,8 @@ RUN apk add --no-cache postgresql-client
 
 # copy app from build image
 COPY --from=0 /app /app
+
+HEALTHCHECK --timeout=10s --start-period=60s CMD /app healthcheck
 
 VOLUME /backup/
 CMD "/app"

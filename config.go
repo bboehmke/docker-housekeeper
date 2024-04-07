@@ -83,16 +83,6 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// LoadConfig from environment
-func LoadConfig() (Config, error) {
-	var conf Config
-	err := loadStruct(reflect.ValueOf(&conf).Elem())
-	if err != nil {
-		return conf, err
-	}
-	return conf, conf.validate()
-}
-
 func loadStruct(st reflect.Value) error {
 	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
