@@ -24,6 +24,11 @@ type PostgresConnection struct {
 
 // NewPostgresConnection from the given configuration
 func NewPostgresConnection(config DatabaseConfig) *PostgresConnection {
+	// no database connection if no host given
+	if config.Host == "" {
+		return nil
+	}
+
 	conf := PostgresConnection{
 		Config: config,
 	}
