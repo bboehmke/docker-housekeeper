@@ -104,7 +104,8 @@ func (h *Housekeeper) Prepare() error {
 	// start health check server
 	h.StartHealthcheckServer()
 
-	if h.db != nil {
+	// no database connection if no host given
+	if h.config.Database.Host != "" {
 		// connect to database
 		log.Print("Wait for database connection")
 		err := h.db.WaitForConnection(time.Minute)
